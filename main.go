@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/andfxx27/my-cool-todo-list-restful-api/config"
+	"github.com/andfxx27/my-cool-todo-list-restful-api/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,35 +18,13 @@ type app struct {
 	dbpool *pgxpool.Pool
 }
 
-type todo struct {
-	Id          string     `db:"id"`
-	Title       string     `db:"title"`
-	Description string     `db:"description"`
-	Status      string     `db:"status"`
-	CreatedDate time.Time  `db:"createdDate"`
-	UpdatedDate *time.Time `db:"updatedDate"`
-	DueDate     *time.Time `db:"dueDate"`
-}
-
-type saveTodoRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	DueDate     string `json:"dueDate"`
-}
-
-type response struct {
-	Status  int
-	Message string
-	Result  interface{}
-}
-
 func (a app) saveTodo(c echo.Context) error {
-	r := response{Status: http.StatusInternalServerError, Message: "Failed to save todo", Result: nil}
+	r := model.HTTPResponse{Status: http.StatusInternalServerError, Message: "Failed to save todo", Result: nil}
 
-	body := new(saveTodoRequest)
+	body := new(model.SaveTodoRequest)
 	err := c.Bind(body)
 	if err != nil {
-		log.Err(errors.New("c.Bind error: " + err.Error()))
+		log.Err(errors.New("c.Bind error: " + err.Error())).Msg("saveTodo error")
 		r.Status = http.StatusBadRequest
 		return c.JSON(http.StatusBadRequest, r)
 	}
@@ -60,51 +39,101 @@ func (a app) saveTodo(c echo.Context) error {
 		uuid.New().String(), body.Title, body.Description, "TODO", dueDate,
 	)
 	if err != nil {
-		log.Err(errors.New("pgxpool.Exec error: " + err.Error()))
+		log.Err(errors.New("pgxpool.Exec error: " + err.Error())).Msg("saveTodo error")
 		return c.JSON(http.StatusInternalServerError, r)
 	}
 
-	return c.JSON(http.StatusCreated, "saveTodo")
+	r = model.HTTPResponse{Status: http.StatusCreated, Message: "Success save todo", Result: nil}
+
+	return c.JSON(http.StatusCreated, r)
 }
 
 func (a app) getTodos(c echo.Context) error {
-	r := response{Status: http.StatusInternalServerError, Message: "Failed to get todos", Result: nil}
+	r := model.HTTPResponse{Status: http.StatusInternalServerError, Message: "Failed to get todos", Result: nil}
 
 	rows, _ := a.dbpool.Query(c.Request().Context(), "select * from todo")
 	if rows.Err() != nil {
-		log.Err(errors.New("pgxpool.Querry error: " + rows.Err().Error()))
+		log.Err(errors.New("pgxpool.Querry error: " + rows.Err().Error())).Msg("getTodos error")
 		return c.JSON(http.StatusInternalServerError, r)
 	}
+	defer rows.Close()
 
-	todos, err := pgx.CollectRows(rows, pgx.RowToStructByName[todo])
+	todos, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.Todo])
 	if err != nil {
-		log.Err(errors.New("pgx.CollectRows error: " + err.Error()))
+		log.Err(errors.New("pgx.CollectRows error: " + err.Error())).Msg("getTodos error")
 		return c.JSON(http.StatusInternalServerError, r)
 	}
 
-	r = response{Status: http.StatusOK, Message: "Success get todos", Result: todos}
+	r = model.HTTPResponse{Status: http.StatusOK, Message: "Success get todos", Result: todos}
 
 	return c.JSON(http.StatusOK, r)
 }
 
 func (a app) getTodo(c echo.Context) error {
+	r := model.HTTPResponse{Status: http.StatusInternalServerError, Message: "Failed to get todo", Result: nil}
+
 	id := c.Param("id")
 
 	rows, _ := a.dbpool.Query(c.Request().Context(), "select * from todo where id = $1", id)
+	if rows.Err() != nil {
+		log.Err(errors.New("pgxpool.Querry error: " + rows.Err().Error())).Msg("getTodo error")
+		return c.JSON(http.StatusInternalServerError, r)
+	}
+	defer rows.Close()
 
-	todo, _ := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[todo])
+	todo, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[model.Todo])
+	if err != nil {
+		log.Err(errors.New("pgx.CollectExactlyOneRow error: " + err.Error())).Msg("getTodo error")
+		return c.JSON(http.StatusInternalServerError, r)
+	}
 
-	r := response{Status: http.StatusOK, Message: "Success get todo", Result: todo}
+	r = model.HTTPResponse{Status: http.StatusOK, Message: "Success get todo", Result: todo}
 
 	return c.JSON(http.StatusOK, r)
 }
 
-func updateTodo(c echo.Context) error {
-	return c.JSON(http.StatusOK, "updateTodo")
+func (a app) updateTodo(c echo.Context) error {
+	r := model.HTTPResponse{Status: http.StatusInternalServerError, Message: "Failed to update todo", Result: nil}
+
+	id := c.Param("id")
+
+	body := new(model.UpdateTodoRequest)
+	err := c.Bind(body)
+	if err != nil {
+		log.Err(errors.New("c.Bind error: " + err.Error())).Msg("updateTodo error")
+		r.Status = http.StatusBadRequest
+		return c.JSON(http.StatusBadRequest, r)
+	}
+
+	_, err = a.dbpool.Exec(
+		c.Request().Context(),
+		"update todo set title = $1, description = $2, status = $3, dueDate = $4 where id = $5",
+		body.Title, body.Description, body.Status, body.DueDate, id,
+	)
+	if err != nil {
+		log.Err(errors.New("pgxpool.Exec error: " + err.Error())).Msg("updateTodo error")
+		return c.JSON(http.StatusInternalServerError, r)
+	}
+
+	r = model.HTTPResponse{Status: http.StatusOK, Message: "Success update todo", Result: nil}
+
+	return c.JSON(http.StatusOK, r)
 }
 
-func deleteTodo(c echo.Context) error {
-	return c.JSON(http.StatusOK, "deleteTodo")
+func (a app) deleteTodo(c echo.Context) error {
+	r := model.HTTPResponse{Status: http.StatusInternalServerError, Message: "Failed to delete todo", Result: nil}
+
+	id := c.Param("id")
+
+	_, err := a.dbpool.Exec(c.Request().Context(), "delete from todo where id = $1", id)
+	if err != nil {
+		log.Err(errors.New("pgxpool.Exec error: " + err.Error())).Msg("deleteTodo error")
+		return c.JSON(http.StatusInternalServerError, r)
+	}
+
+	r = model.HTTPResponse{Status: http.StatusOK, Message: "Success delete todo", Result: nil}
+
+	return c.JSON(http.StatusOK, r)
 }
 
 func main() {
@@ -119,8 +148,8 @@ func main() {
 	e.POST("/todos", a.saveTodo)
 	e.GET("/todos", a.getTodos)
 	e.GET("/todos/:id", a.getTodo)
-	e.PUT("/todos/:id", updateTodo)
-	e.DELETE("/todos/:id", deleteTodo)
+	e.PUT("/todos/:id", a.updateTodo)
+	e.DELETE("/todos/:id", a.deleteTodo)
 
 	e.Logger.Fatal(e.Start(":1323"))
 }
